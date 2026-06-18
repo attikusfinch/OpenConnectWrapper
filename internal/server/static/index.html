@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenConnect Multi</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div id="toast" class="toast" hidden></div>
+
+    <section id="authView" class="auth-view">
+      <div class="auth-panel">
+        <div class="brand-block">
+          <span class="brand-mark">OC</span>
+          <div>
+            <h1>OpenConnect Multi</h1>
+            <p id="authSubtitle">Загрузка</p>
+          </div>
+        </div>
+        <form id="authForm" class="pin-form" autocomplete="off">
+          <label>
+            <span>PIN</span>
+            <input id="pinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="0000">
+          </label>
+          <button id="authSubmit" type="submit">Открыть</button>
+        </form>
+        <p id="authError" class="form-error" role="alert"></p>
+      </div>
+    </section>
+
+    <main id="appView" class="app-shell" hidden>
+      <header class="topbar">
+        <div class="brand-line">
+          <span class="brand-mark small">OC</span>
+          <div>
+            <strong>OpenConnect Multi</strong>
+            <span id="vaultPath" class="muted"></span>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span id="vpnState" class="state-chip">disconnected</span>
+          <button id="disconnectBtn" class="secondary" type="button">Disconnect</button>
+          <button id="lockBtn" class="ghost" type="button">Lock</button>
+        </div>
+      </header>
+
+      <div id="pathWarning" class="path-warning" hidden></div>
+
+      <div class="workspace">
+        <aside class="profiles-pane">
+          <div class="pane-head">
+            <h2>Профили</h2>
+            <button id="newProfileBtn" type="button">Новый</button>
+          </div>
+          <div id="profilesList" class="profiles-list"></div>
+        </aside>
+
+        <section class="main-pane">
+          <section class="connection-strip">
+            <div>
+              <span class="label">Текущий VPN</span>
+              <strong id="currentProfile">Нет подключения</strong>
+            </div>
+            <div>
+              <span class="label">PID</span>
+              <strong id="currentPid">-</strong>
+            </div>
+            <div>
+              <span class="label">Запущен</span>
+              <strong id="currentSince">-</strong>
+            </div>
+          </section>
+
+          <section class="editor-panel">
+            <div class="pane-head">
+              <h2 id="editorTitle">Новый профиль</h2>
+              <button id="clearEditorBtn" class="ghost" type="button">Очистить</button>
+            </div>
+            <form id="profileForm" class="profile-form" autocomplete="off">
+              <input id="profileId" type="hidden">
+              <label>
+                <span>Название</span>
+                <input id="profileName" name="name" type="text" placeholder="Office VPN">
+              </label>
+              <label>
+                <span>Сервер</span>
+                <input id="profileServer" name="server" type="text" placeholder="vpn.example.com" required>
+              </label>
+              <label>
+                <span>Логин</span>
+                <input id="profileUsername" name="username" type="text" autocomplete="off">
+              </label>
+              <label>
+                <span>Пароль</span>
+                <input id="profilePassword" name="password" type="password" autocomplete="new-password">
+              </label>
+              <label>
+                <span>Группа</span>
+                <input id="profileAuthGroup" name="authGroup" type="text" placeholder="optional">
+              </label>
+              <label>
+                <span>Протокол</span>
+                <select id="profileProtocol" name="protocol">
+                  <option value="">auto</option>
+                  <option value="anyconnect">anyconnect</option>
+                  <option value="gp">globalprotect</option>
+                  <option value="pulse">pulse</option>
+                  <option value="fortinet">fortinet</option>
+                  <option value="f5">f5</option>
+                  <option value="nc">juniper</option>
+                  <option value="array">array</option>
+                </select>
+              </label>
+              <label>
+                <span>User-Agent</span>
+                <input id="profileUserAgent" name="userAgent" type="text">
+              </label>
+              <label>
+                <span>Server cert</span>
+                <input id="profileServerCert" name="serverCert" type="text" placeholder="sha256:...">
+              </label>
+              <label class="check-row">
+                <input id="profileNoCertCheck" name="noCertCheck" type="checkbox">
+                <span>no-cert-check</span>
+              </label>
+              <label class="wide">
+                <span>Extra args</span>
+                <textarea id="profileExtraArgs" name="extraArgs" rows="4" placeholder="--timestamp&#10;--reconnect-timeout=10"></textarea>
+              </label>
+              <div class="form-actions">
+                <button id="saveProfileBtn" type="submit">Сохранить</button>
+                <button id="connectEditorBtn" class="secondary" type="button">Connect</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="settings-panel">
+            <div class="pane-head">
+              <h2>Настройки</h2>
+              <button id="saveSettingsBtn" class="secondary" type="button">Сохранить путь</button>
+            </div>
+            <label class="path-field">
+              <span>openconnect.exe</span>
+              <input id="openconnectPath" type="text" placeholder="openconnect">
+            </label>
+          </section>
+
+          <section class="logs-panel">
+            <div class="pane-head">
+              <h2>Лог</h2>
+              <button id="refreshLogsBtn" class="ghost" type="button">Обновить</button>
+            </div>
+            <pre id="logsOutput"></pre>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+# Build output
+/dist/
+/bin/
+/build/
+
+# Local runtime logs
+*.log
+/logs/
+
+# Local vault/config data
+/vault.json
+/device.key
+/OpenConnectMulti/
+
+# Temporary downloads/extractions for bundled OpenConnect updates
+/third_party/openconnect/downloads/
+/third_party/openconnect/extracted-installer/
+*.tmp
+*.temp
+
+# Go workspace/cache artifacts
+/coverage.out
+*.test
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# PowerShell transcripts
+PowerShell_transcript*.txt
