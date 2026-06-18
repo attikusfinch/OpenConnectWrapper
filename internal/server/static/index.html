@@ -52,7 +52,7 @@
         <aside class="profiles-pane">
           <div class="pane-head">
             <h2>Профили</h2>
-            <button id="newProfileBtn" type="button">Новый</button>
+            <button id="newProfileBtn" type="button" title="New profile">+</button>
           </div>
           <div id="profilesList" class="profiles-list"></div>
         </aside>
@@ -73,10 +73,11 @@
             </div>
           </section>
 
-          <section class="editor-panel">
+          <div id="editorOverlay" class="modal-overlay" hidden>
+          <section class="editor-panel" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
             <div class="pane-head">
               <h2 id="editorTitle">Новый профиль</h2>
-              <button id="clearEditorBtn" class="ghost" type="button">Очистить</button>
+              <button id="clearEditorBtn" class="ghost" type="button">Закрыть</button>
             </div>
             <form id="profileForm" class="profile-form" autocomplete="off">
               <input id="profileId" type="hidden">
@@ -135,6 +136,7 @@
               </div>
             </form>
           </section>
+          </div>
 
           <section class="settings-panel">
             <div class="pane-head">

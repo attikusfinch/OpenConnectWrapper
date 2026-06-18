@@ -19,6 +19,7 @@ const authSubtitle = $("authSubtitle");
 const authError = $("authError");
 const profilesList = $("profilesList");
 const profileForm = $("profileForm");
+const editorOverlay = $("editorOverlay");
 const pathWarning = $("pathWarning");
 const toast = $("toast");
 
@@ -150,6 +151,13 @@ function renderProfiles() {
     const item = document.createElement("article");
     item.className = `profile-item ${profile.id === state.selectedId ? "active" : ""}`;
 
+    const avatar = document.createElement("span");
+    avatar.className = "profile-avatar";
+    avatar.textContent = avatarLabel(profile);
+
+    const content = document.createElement("div");
+    content.className = "profile-content";
+
     const main = document.createElement("div");
     main.className = "profile-main";
     const title = document.createElement("strong");
@@ -170,7 +178,8 @@ function renderProfiles() {
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "secondary";
-    edit.textContent = "Edit";
+    edit.textContent = "...";
+    edit.title = "Edit";
     edit.addEventListener("click", () => editProfile(profile));
 
     const del = document.createElement("button");
@@ -181,9 +190,15 @@ function renderProfiles() {
     del.addEventListener("click", () => deleteProfile(profile));
 
     actions.append(connect, edit, del);
-    item.append(main, actions);
+    content.append(main, actions);
+    item.append(avatar, content);
     profilesList.append(item);
   }
+}
+
+function avatarLabel(profile) {
+  const source = (profile.name || profile.server || "VPN").trim();
+  return source.slice(0, 2).toUpperCase();
 }
 
 function editProfile(profile) {
@@ -201,16 +216,29 @@ function editProfile(profile) {
   $("profileServerCert").value = profile.server_cert || "";
   $("profileNoCertCheck").checked = Boolean(profile.no_cert_check);
   $("profileExtraArgs").value = (profile.extra_args || []).join("\n");
+  openEditor();
   renderProfiles();
 }
 
-function clearEditor() {
+function newProfile() {
   state.selectedId = "";
   $("editorTitle").textContent = "Новый профиль";
   profileForm.reset();
   $("profileId").value = "";
   $("profilePassword").placeholder = "";
+  openEditor();
   renderProfiles();
+}
+
+function openEditor() {
+  editorOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  window.setTimeout(() => $("profileName").focus(), 0);
+}
+
+function closeEditor() {
+  editorOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 async function saveProfile() {
@@ -234,7 +262,8 @@ async function saveProfile() {
   state.selectedId = data.profile.id;
   showToast("Профиль сохранен");
   await loadProfiles();
-  editProfile(data.profile);
+  closeEditor();
+  return data.profile;
 }
 
 async function connectProfile(id) {
@@ -256,7 +285,8 @@ async function deleteProfile(profile) {
   }
   await api(`/api/profiles/${encodeURIComponent(profile.id)}`, { method: "DELETE" });
   if (state.selectedId === profile.id) {
-    clearEditor();
+    closeEditor();
+    state.selectedId = "";
   }
   await loadProfiles();
   showToast("Профиль удален");
@@ -286,6 +316,19 @@ authForm.addEventListener("submit", async (event) => {
     await refreshStatus();
     showToast(state.authMode === "setup" ? "Vault создан" : "Vault открыт");
   } catch (error) {
+    if (state.authMode === "setup" && error.status === 409) {
+      state.authMode = "unlock";
+      try {
+        await api("/api/unlock", { method: "POST", body: JSON.stringify({ pin }) });
+        await refreshStatus();
+        showToast("Vault открыт");
+        return;
+      } catch {
+        renderAuth("unlock");
+        authError.textContent = "Vault уже создан. Введи существующий PIN.";
+        return;
+      }
+    }
     authError.textContent = error.message;
   }
 });
@@ -299,18 +342,30 @@ profileForm.addEventListener("submit", async (event) => {
   }
 });
 
-$("newProfileBtn").addEventListener("click", clearEditor);
-$("clearEditorBtn").addEventListener("click", clearEditor);
+$("newProfileBtn").addEventListener("click", newProfile);
+$("clearEditorBtn").addEventListener("click", closeEditor);
 $("refreshLogsBtn").addEventListener("click", loadLogs);
 
 $("connectEditorBtn").addEventListener("click", async () => {
-  const id = $("profileId").value.trim();
-  if (!id) {
-    await saveProfile();
+  try {
+    const saved = await saveProfile();
+    if (saved?.id) {
+      await connectProfile(saved.id);
+    }
+  } catch (error) {
+    showToast(error.message);
   }
-  const nextId = $("profileId").value.trim() || state.selectedId;
-  if (nextId) {
-    await connectProfile(nextId);
+});
+
+editorOverlay.addEventListener("click", (event) => {
+  if (event.target === editorOverlay) {
+    closeEditor();
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !editorOverlay.hidden) {
+    closeEditor();
   }
 });
 

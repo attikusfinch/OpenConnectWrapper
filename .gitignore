@@ -21,6 +21,7 @@
 # Go workspace/cache artifacts
 /coverage.out
 *.test
+*.syso
 
 # Editor and OS noise
 .DS_Store

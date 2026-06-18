@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"time"
 
+	"openconnectmulti/internal/desktop"
 	"openconnectmulti/internal/server"
 	"openconnectmulti/internal/vault"
 	"openconnectmulti/internal/vpn"
@@ -21,13 +23,17 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:49111", "HTTP listen address")
 	configDir := flag.String("config-dir", "", "config directory for the encrypted vault")
-	noBrowser := flag.Bool("no-browser", false, "do not open the browser automatically")
+	browser := flag.Bool("browser", false, "open in the default browser instead of a desktop window")
+	serverOnly := flag.Bool("server-only", false, "run only the local HTTP server")
+	noBrowser := flag.Bool("no-browser", false, "deprecated alias for --server-only")
 	flag.Parse()
 
 	store, err := vault.NewStore(*configDir)
 	if err != nil {
 		log.Fatalf("create vault store: %v", err)
 	}
+	closeLog := setupLogging(store.Dir())
+	defer closeLog()
 
 	vpnManager := vpn.NewManager()
 	app := server.New(store, vpnManager)
@@ -42,26 +48,24 @@ func main() {
 	}
 
 	url := "http://" + listener.Addr().String()
-	fmt.Printf("OpenConnect Multi is running: %s\n", url)
-	fmt.Printf("Vault: %s\n", store.VaultPath())
-	if !*noBrowser {
-		_ = openBrowser(url)
-	}
+	log.Printf("OpenConnect Multi is running: %s", url)
+	log.Printf("Vault: %s", store.VaultPath())
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- httpServer.Serve(listener)
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-
-	select {
-	case sig := <-sigCh:
-		fmt.Printf("\nreceived %s, shutting down...\n", sig)
-	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+	if *serverOnly || *noBrowser {
+		waitForExit(errCh)
+	} else if *browser {
+		if err := openBrowser(url); err != nil {
+			log.Printf("open browser: %v", err)
+		}
+		waitForExit(errCh)
+	} else {
+		if err := desktop.Open(url, store.Dir()); err != nil {
+			log.Printf("desktop window: %v", err)
 		}
 	}
 
@@ -69,6 +73,34 @@ func main() {
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
 	_ = vpnManager.Disconnect()
+}
+
+func setupLogging(configDir string) func() {
+	logPath := filepath.Join(configDir, "openconnectmulti.log")
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		log.Printf("open log file: %v", err)
+		return func() {}
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	return func() {
+		_ = file.Close()
+	}
+}
+
+func waitForExit(errCh <-chan error) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
+	select {
+	case sig := <-sigCh:
+		log.Printf("received %s, shutting down", sig)
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}
 }
 
 func listen(addr string) (net.Listener, error) {
