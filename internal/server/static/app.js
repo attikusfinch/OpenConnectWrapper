@@ -97,6 +97,9 @@ function updateVpnStatus(vpn) {
   $("currentPid").textContent = vpn?.pid ? String(vpn.pid) : "-";
   $("currentSince").textContent = vpn?.started_at ? formatTime(vpn.started_at) : "-";
   $("disconnectBtn").disabled = status === "disconnected";
+  if (state.profiles.length > 0) {
+    renderProfiles();
+  }
 }
 
 function updatePathWarning(status) {
@@ -148,6 +151,8 @@ function renderProfiles() {
   }
 
   for (const profile of state.profiles) {
+    const vpn = state.status?.vpn || {};
+    const isActive = vpn.profile_id === profile.id && vpn.state && vpn.state !== "disconnected";
     const item = document.createElement("article");
     item.className = `profile-item ${profile.id === state.selectedId ? "active" : ""}`;
 
@@ -172,28 +177,71 @@ function renderProfiles() {
 
     const connect = document.createElement("button");
     connect.type = "button";
-    connect.textContent = "Connect";
-    connect.addEventListener("click", () => connectProfile(profile.id));
+    connect.textContent = isActive ? "Disconnect" : "Connect";
+    connect.className = isActive ? "secondary" : "";
+    connect.addEventListener("click", () => {
+      if (isActive) {
+        disconnectVpn();
+        return;
+      }
+      connectProfile(profile.id);
+    });
+
+    const menuWrap = document.createElement("div");
+    menuWrap.className = "profile-menu";
+
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "secondary icon-button";
+    menuButton.textContent = "...";
+    menuButton.title = "Actions";
+    menuButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleProfileMenu(menuWrap);
+    });
+
+    const menuPanel = document.createElement("div");
+    menuPanel.className = "profile-menu-panel";
 
     const edit = document.createElement("button");
     edit.type = "button";
-    edit.className = "secondary";
-    edit.textContent = "...";
-    edit.title = "Edit";
-    edit.addEventListener("click", () => editProfile(profile));
+    edit.className = "ghost";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => {
+      closeProfileMenus();
+      editProfile(profile);
+    });
 
     const del = document.createElement("button");
     del.type = "button";
-    del.className = "danger icon-button";
-    del.textContent = "×";
-    del.title = "Удалить";
-    del.addEventListener("click", () => deleteProfile(profile));
+    del.className = "danger";
+    del.textContent = "Delete";
+    del.addEventListener("click", () => {
+      closeProfileMenus();
+      deleteProfile(profile);
+    });
 
-    actions.append(connect, edit, del);
+    menuPanel.append(edit, del);
+    menuWrap.append(menuButton, menuPanel);
+    actions.append(connect, menuWrap);
     content.append(main, actions);
     item.append(avatar, content);
     profilesList.append(item);
   }
+}
+
+function toggleProfileMenu(menu) {
+  const wasOpen = menu.classList.contains("open");
+  closeProfileMenus();
+  if (!wasOpen) {
+    menu.classList.add("open");
+  }
+}
+
+function closeProfileMenus() {
+  document.querySelectorAll(".profile-menu.open").forEach((menu) => {
+    menu.classList.remove("open");
+  });
 }
 
 function avatarLabel(profile) {
@@ -278,8 +326,15 @@ async function connectProfile(id) {
   }
 }
 
+async function disconnectVpn() {
+  await api("/api/disconnect", { method: "POST", body: "{}" });
+  showToast("OpenConnect остановлен");
+  await refreshStatus();
+  await loadLogs();
+}
+
 async function deleteProfile(profile) {
-  const ok = window.confirm(`Удалить профиль "${profile.name}"?`);
+  const ok = window.confirm(`Удалить профиль "${profile.name}"? Это действие нельзя отменить.`);
   if (!ok) {
     return;
   }
@@ -367,13 +422,17 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !editorOverlay.hidden) {
     closeEditor();
   }
+  if (event.key === "Escape") {
+    closeProfileMenus();
+  }
+});
+
+document.addEventListener("click", () => {
+  closeProfileMenus();
 });
 
 $("disconnectBtn").addEventListener("click", async () => {
-  await api("/api/disconnect", { method: "POST", body: "{}" });
-  showToast("OpenConnect остановлен");
-  await refreshStatus();
-  await loadLogs();
+  await disconnectVpn();
 });
 
 $("lockBtn").addEventListener("click", async () => {

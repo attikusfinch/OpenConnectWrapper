@@ -90,6 +90,7 @@ func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error 
 	}
 	args := buildArgs(profile)
 	cmd := exec.Command(binary, args...)
+	configureCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
