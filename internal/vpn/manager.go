@@ -41,12 +41,13 @@ type LogEntry struct {
 }
 
 type Manager struct {
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	done    chan error
-	status  Status
-	logs    []LogEntry
-	maxLogs int
+	operationMu sync.Mutex
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	done        chan error
+	status      Status
+	logs        []LogEntry
+	maxLogs     int
 }
 
 func NewManager() *Manager {
@@ -71,6 +72,8 @@ func (m *Manager) Logs() []LogEntry {
 }
 
 func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
 	if strings.TrimSpace(profile.Server) == "" {
 		return errors.New("server is required")
 	}
@@ -79,7 +82,7 @@ func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error 
 	}
 
 	if m.isRunning() {
-		if err := m.Disconnect(); err != nil {
+		if err := m.disconnect(); err != nil {
 			return err
 		}
 	}
@@ -132,8 +135,7 @@ func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error 
 	go m.pipeLogs(stderr)
 	go func() {
 		err := cmd.Wait()
-		done <- err
-		close(done)
+		defer func() { done <- err; close(done) }()
 
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -143,7 +145,7 @@ func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error 
 		m.cmd = nil
 		m.done = nil
 		last := ""
-		if err != nil {
+		if err != nil && m.status.State != StateStopping {
 			last = err.Error()
 			m.appendLogLocked("openconnect exited: " + err.Error())
 		} else {
@@ -172,6 +174,12 @@ func (m *Manager) Connect(profile vault.Profile, settings vault.Settings) error 
 }
 
 func (m *Manager) Disconnect() error {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	return m.disconnect()
+}
+
+func (m *Manager) disconnect() error {
 	m.mu.Lock()
 	cmd := m.cmd
 	done := m.done
@@ -185,7 +193,9 @@ func (m *Manager) Disconnect() error {
 	m.mu.Unlock()
 
 	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/PID", fmt.Sprint(cmd.Process.Pid), "/T", "/F").Run()
+		kill := exec.Command("taskkill", "/PID", fmt.Sprint(cmd.Process.Pid), "/T", "/F")
+		configureCommand(kill)
+		_ = kill.Run()
 	} else {
 		_ = cmd.Process.Signal(os.Interrupt)
 	}
@@ -198,6 +208,7 @@ func (m *Manager) Disconnect() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
+			return errors.New("openconnect did not stop; refusing to start another connection")
 		}
 		return nil
 	}

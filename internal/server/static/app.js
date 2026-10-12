@@ -6,6 +6,8 @@ const state = {
   status: null,
   selectedId: "",
   authMode: "unlock",
+  profilesKey: "",
+  busy: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -67,36 +69,52 @@ async function refreshStatus() {
   renderAppShell();
   updateVpnStatus(data.vpn);
   updatePathWarning(data);
+  $("agentState").textContent = data.agent_enabled ? "Доступен локально" : "Недоступен";
+  $("agentState").className = `state-chip ${data.agent_enabled ? "connected" : ""}`;
+  $("agentActivity").textContent = data.agent_last_action ? `${data.agent_last_action} · ${formatTime(data.agent_last_at)}` : "Агент ещё не менял подключение в этой сессии.";
   if (firstRender) {
     await Promise.all([loadProfiles(), loadSettings(), loadLogs()]);
   }
 }
 
 function renderAuth(mode) {
+  const entering = authView.hidden || state.authMode !== mode;
   state.authMode = mode;
+  state.unlocked = false;
+  closeEditor();
+  state.profiles = [];
+  state.profilesKey = "";
+  profilesList.replaceChildren();
+  profileForm.reset();
+  $("logsOutput").textContent = "";
   appView.hidden = true;
   authView.hidden = false;
   authSubmit.textContent = mode === "setup" ? "Создать" : "Открыть";
-  authSubtitle.textContent = mode === "setup" ? "Создай 4-значный PIN" : "Введи 4-значный PIN";
-  pinInput.value = "";
-  pinInput.focus();
+  authSubtitle.textContent = mode === "setup" ? "Создайте PIN из 4 цифр для защиты профилей" : "Введите PIN из 4 цифр, чтобы открыть профили";
+  if (entering) {
+    pinInput.value = "";
+    pinInput.focus();
+  }
 }
 
 function renderAppShell() {
   authView.hidden = true;
   appView.hidden = false;
-  $("vaultPath").textContent = state.status?.vault_path || "";
+  $("vaultPath").textContent = "Локальный менеджер VPN";
+  $("vaultPath").title = state.status?.vault_path || "";
 }
 
 function updateVpnStatus(vpn) {
   const chip = $("vpnState");
   const status = vpn?.state || "disconnected";
-  chip.textContent = status;
+  chip.textContent = ({ disconnected: "Не подключён", connecting: "Подключение…", connected: "Подключён", stopping: "Отключение…" })[status] || status;
   chip.className = `state-chip ${status}`;
-  $("currentProfile").textContent = vpn?.profile_name || "Нет подключения";
+  $("currentProfile").textContent = status === "disconnected" ? "Нет подключения" : (vpn?.profile_name || "VPN");
   $("currentPid").textContent = vpn?.pid ? String(vpn.pid) : "-";
-  $("currentSince").textContent = vpn?.started_at ? formatTime(vpn.started_at) : "-";
-  $("disconnectBtn").disabled = status === "disconnected";
+  $("currentSince").textContent = status !== "disconnected" && vpn?.started_at ? formatTime(vpn.started_at) : "—";
+  $("disconnectBtn").disabled = state.busy || status === "disconnected" || status === "stopping";
+  $("connectionError").textContent = vpn?.last_error ? `Соединение завершилось с ошибкой: ${vpn.last_error}. Подробности в журнале.` : "";
+  $("connectionError").hidden = !vpn?.last_error;
   if (state.profiles.length > 0) {
     renderProfiles();
   }
@@ -120,6 +138,7 @@ function updatePathWarning(status) {
 
 async function loadProfiles() {
   const data = await api("/api/profiles");
+  if (!state.unlocked) return;
   state.profiles = data.profiles || [];
   if (state.selectedId && !state.profiles.some((profile) => profile.id === state.selectedId)) {
     state.selectedId = "";
@@ -137,24 +156,47 @@ async function loadLogs() {
   const lines = (data.logs || []).map((entry) => {
     return `[${formatTime(entry.time)}] ${entry.message}`;
   });
-  $("logsOutput").textContent = lines.length ? lines.join("\n") : "Лог пуст";
+  if (!state.unlocked) return;
+  const output = $("logsOutput");
+  const atBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+  const content = lines.length ? lines.join("\n") : "Здесь появятся события подключения.\nВыберите профиль и нажмите «Подключить».";
+  if (output.textContent !== content) {
+    output.textContent = content;
+    if (atBottom) output.scrollTop = output.scrollHeight;
+  }
 }
 
 function renderProfiles() {
+  const query = $("profileSearch").value.trim().toLowerCase();
+  const key = JSON.stringify([state.profiles, state.selectedId, state.status?.vpn?.state, state.status?.vpn?.profile_id, query, state.busy]);
+  if (key === state.profilesKey) return;
+  state.profilesKey = key;
   profilesList.replaceChildren();
   if (state.profiles.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "Профилей пока нет";
+    empty.textContent = "Добавьте первый VPN-профиль: адрес сервера, логин и пароль.";
+    const add = document.createElement("button");
+    add.type = "button";
+    add.textContent = "Добавить профиль";
+    add.addEventListener("click", newProfile);
+    empty.append(add);
     profilesList.append(empty);
     return;
   }
 
-  for (const profile of state.profiles) {
+  const filtered = state.profiles.filter((p) => `${p.name} ${p.server}`.toLowerCase().includes(query));
+  if (!filtered.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "Ничего не найдено. Попробуйте другой запрос.";
+    profilesList.append(empty);
+  }
+  for (const profile of filtered) {
     const vpn = state.status?.vpn || {};
     const isActive = vpn.profile_id === profile.id && vpn.state && vpn.state !== "disconnected";
     const item = document.createElement("article");
-    item.className = `profile-item ${profile.id === state.selectedId ? "active" : ""}`;
+    item.className = `profile-item ${isActive ? "active" : ""}`;
 
     const avatar = document.createElement("span");
     avatar.className = "profile-avatar";
@@ -177,14 +219,15 @@ function renderProfiles() {
 
     const connect = document.createElement("button");
     connect.type = "button";
-    connect.textContent = isActive ? "Disconnect" : "Connect";
+    connect.textContent = isActive ? "Отключить" : "Подключить";
+    connect.disabled = state.busy || vpn.state === "stopping";
     connect.className = isActive ? "secondary" : "";
     connect.addEventListener("click", () => {
       if (isActive) {
-        disconnectVpn();
+        runAction(disconnectVpn);
         return;
       }
-      connectProfile(profile.id);
+      runAction(() => connectProfile(profile.id));
     });
 
     const menuWrap = document.createElement("div");
@@ -194,7 +237,9 @@ function renderProfiles() {
     menuButton.type = "button";
     menuButton.className = "secondary icon-button";
     menuButton.textContent = "...";
-    menuButton.title = "Actions";
+    menuButton.title = "Действия с профилем";
+    menuButton.setAttribute("aria-label", `Действия: ${profile.name}`);
+    menuButton.setAttribute("aria-expanded", "false");
     menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleProfileMenu(menuWrap);
@@ -206,7 +251,7 @@ function renderProfiles() {
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "ghost";
-    edit.textContent = "Edit";
+    edit.textContent = "Изменить";
     edit.addEventListener("click", () => {
       closeProfileMenus();
       editProfile(profile);
@@ -215,10 +260,10 @@ function renderProfiles() {
     const del = document.createElement("button");
     del.type = "button";
     del.className = "danger";
-    del.textContent = "Delete";
+    del.textContent = "Удалить";
     del.addEventListener("click", () => {
       closeProfileMenus();
-      deleteProfile(profile);
+      runAction(() => deleteProfile(profile));
     });
 
     menuPanel.append(edit, del);
@@ -235,12 +280,14 @@ function toggleProfileMenu(menu) {
   closeProfileMenus();
   if (!wasOpen) {
     menu.classList.add("open");
+    menu.querySelector("button").setAttribute("aria-expanded", "true");
   }
 }
 
 function closeProfileMenus() {
   document.querySelectorAll(".profile-menu.open").forEach((menu) => {
     menu.classList.remove("open");
+    menu.querySelector("button").setAttribute("aria-expanded", "false");
   });
 }
 
@@ -278,18 +325,28 @@ function newProfile() {
   renderProfiles();
 }
 
+let editorTrigger;
 function openEditor() {
+  editorTrigger = document.activeElement;
+  $("appView").querySelector(".topbar").inert = true;
+  document.querySelector(".profiles-pane").inert = true;
   editorOverlay.hidden = false;
   document.body.classList.add("modal-open");
   window.setTimeout(() => $("profileName").focus(), 0);
 }
 
 function closeEditor() {
+  const wasOpen = !editorOverlay.hidden;
+  $("appView").querySelector(".topbar").inert = false;
+  document.querySelector(".profiles-pane").inert = false;
   editorOverlay.hidden = true;
   document.body.classList.remove("modal-open");
+  $("profilePassword").value = "";
+  if (wasOpen) (editorTrigger?.isConnected ? editorTrigger : $("newProfileBtn")).focus();
 }
 
 async function saveProfile() {
+  if (!profileForm.reportValidity()) return null;
   const payload = {
     id: $("profileId").value.trim(),
     name: $("profileName").value.trim(),
@@ -321,8 +378,8 @@ async function connectProfile(id) {
     await refreshStatus();
     await loadLogs();
   } catch (error) {
-    showToast(error.message);
     await loadLogs().catch(() => {});
+    throw error;
   }
 }
 
@@ -361,113 +418,84 @@ function formatTime(value) {
   });
 }
 
-authForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  authError.textContent = "";
-  const pin = pinInput.value.trim();
-  const path = state.authMode === "setup" ? "/api/setup" : "/api/unlock";
-  try {
-    await api(path, { method: "POST", body: JSON.stringify({ pin }) });
-    await refreshStatus();
-    showToast(state.authMode === "setup" ? "Vault создан" : "Vault открыт");
-  } catch (error) {
-    if (state.authMode === "setup" && error.status === 409) {
-      state.authMode = "unlock";
-      try {
-        await api("/api/unlock", { method: "POST", body: JSON.stringify({ pin }) });
-        await refreshStatus();
-        showToast("Vault открыт");
-        return;
-      } catch {
-        renderAuth("unlock");
-        authError.textContent = "Vault уже создан. Введи существующий PIN.";
-        return;
-      }
-    }
-    authError.textContent = error.message;
-  }
-});
-
-profileForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    await saveProfile();
-  } catch (error) {
+async function runAction(action) {
+  if (state.busy) return;
+  state.busy = true;
+  const buttons = [...document.querySelectorAll("button")];
+  const disabled = buttons.map((button) => button.disabled);
+  buttons.forEach((button) => { button.disabled = true; });
+  try { await action(); }
+  catch (error) {
     showToast(error.message);
+    if (error.status === 401) renderAuth("unlock");
+  } finally {
+    state.busy = false;
+    buttons.forEach((button, i) => { button.disabled = disabled[i]; });
+    if (state.unlocked) updateVpnStatus(state.status?.vpn);
   }
-});
+}
 
+authForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  runAction(async () => {
+    authError.textContent = "";
+    const pin = pinInput.value.trim();
+    if (!/^[0-9]{4}$/.test(pin)) { authError.textContent = "Введите ровно 4 цифры."; return; }
+    try {
+      await api(state.authMode === "setup" ? "/api/setup" : "/api/unlock", { method: "POST", body: JSON.stringify({ pin }) });
+      pinInput.value = "";
+      await refreshStatus();
+    } catch (error) {
+      if (error.status === 409) renderAuth("unlock");
+      authError.textContent = error.status === 401 ? "Неверный PIN. Попробуйте ещё раз." : error.status === 429 ? "Слишком много попыток. Подождите 30 секунд." : error.message;
+    }
+  });
+});
+profileForm.addEventListener("submit", (event) => { event.preventDefault(); runAction(saveProfile); });
+$("profileSearch").addEventListener("input", renderProfiles);
 $("newProfileBtn").addEventListener("click", newProfile);
 $("clearEditorBtn").addEventListener("click", closeEditor);
-$("refreshLogsBtn").addEventListener("click", loadLogs);
-
-$("connectEditorBtn").addEventListener("click", async () => {
-  try {
-    const saved = await saveProfile();
-    if (saved?.id) {
-      await connectProfile(saved.id);
-    }
-  } catch (error) {
-    showToast(error.message);
-  }
-});
-
+$("refreshLogsBtn").addEventListener("click", () => runAction(loadLogs));
+$("connectEditorBtn").addEventListener("click", () => runAction(async () => {
+  const saved = await saveProfile();
+  if (saved?.id) await connectProfile(saved.id);
+}));
 editorOverlay.addEventListener("click", (event) => {
-  if (event.target === editorOverlay) {
-    closeEditor();
-  }
+  if (event.target === editorOverlay && !state.busy) closeEditor();
 });
-
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !editorOverlay.hidden) {
-    closeEditor();
-  }
   if (event.key === "Escape") {
+    if (!state.busy && !editorOverlay.hidden) closeEditor();
     closeProfileMenus();
   }
+  if (event.key === "Tab" && !editorOverlay.hidden) {
+    const elements = [...editorOverlay.querySelectorAll('button:not(:disabled), input:not([type="hidden"]), select, textarea, summary')].filter(el => el.getClientRects().length);
+    const first = elements[0], last = elements[elements.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
 });
-
-document.addEventListener("click", () => {
-  closeProfileMenus();
-});
-
-$("disconnectBtn").addEventListener("click", async () => {
-  await disconnectVpn();
-});
-
-$("lockBtn").addEventListener("click", async () => {
+document.addEventListener("click", closeProfileMenus);
+$("disconnectBtn").addEventListener("click", () => runAction(disconnectVpn));
+$("lockBtn").addEventListener("click", () => runAction(async () => {
   await api("/api/lock", { method: "POST", body: "{}" });
-  await refreshStatus();
-});
-
-$("saveSettingsBtn").addEventListener("click", async () => {
+  renderAuth("unlock");
+}));
+$("saveSettingsBtn").addEventListener("click", () => runAction(async () => {
   const payload = { openconnect_path: $("openconnectPath").value.trim() || "openconnect" };
-  state.settings = await api("/api/settings", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  state.settings = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
   showToast("Настройки сохранены");
   await refreshStatus();
-});
-
-window.setInterval(async () => {
-  if (!state.unlocked) {
-    return;
-  }
+}));
+async function poll() {
   try {
-    await refreshStatus();
-  } catch {
-    state.unlocked = false;
-  }
-}, 2500);
-
-window.setInterval(async () => {
-  if (state.unlocked) {
-    await loadLogs().catch(() => {});
-  }
-}, 3500);
-
-refreshStatus().catch((error) => {
-  authSubtitle.textContent = "Ошибка запуска";
-  authError.textContent = error.message;
-});
+    if (!state.busy) {
+      await refreshStatus();
+      if (state.unlocked) await loadLogs();
+    }
+  } catch (error) {
+    if (authView.hidden) showToast("Нет связи с приложением. Повторяем попытку…");
+    else { authSubtitle.textContent = "Ожидание приложения…"; authError.textContent = error.message; }
+  } finally { window.setTimeout(poll, 2500); }
+}
+poll();

@@ -27,18 +27,28 @@ var staticFiles embed.FS
 
 var pinPattern = regexp.MustCompile(`^\d{4}$`)
 
-type Server struct {
-	store *vault.Store
-	vpn   *vpn.Manager
-
-	mu             sync.Mutex
-	unlocked       *vault.Unlocked
-	sessionToken   string
-	failedUnlocks  int
-	unlockLockedTo time.Time
+type vpnController interface {
+	Status() vpn.Status
+	Logs() []vpn.LogEntry
+	Connect(vault.Profile, vault.Settings) error
+	Disconnect() error
 }
 
-func New(store *vault.Store, vpnManager *vpn.Manager) *Server {
+type Server struct {
+	store *vault.Store
+	vpn   vpnController
+
+	mu              sync.Mutex
+	unlocked        *vault.Unlocked
+	sessionToken    string
+	failedUnlocks   int
+	unlockLockedTo  time.Time
+	agentToken      string
+	agentLastAction string
+	agentLastAt     time.Time
+}
+
+func New(store *vault.Store, vpnManager vpnController) *Server {
 	return &Server{store: store, vpn: vpnManager}
 }
 
@@ -47,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/static/", s.handleStatic)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/agent", s.handleAgent)
 	mux.HandleFunc("/api/setup", s.handleSetup)
 	mux.HandleFunc("/api/unlock", s.handleUnlock)
 	mux.HandleFunc("/api/lock", s.handleLock)
@@ -86,11 +97,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	openConnectPath := vpn.ResolveOpenConnectPath(configuredOpenConnectPath)
 	lockedUntil := s.unlockLockedTo
+	agentEnabled := s.agentToken != ""
+	agentAction, agentAt := "", time.Time{}
+	if unlocked {
+		agentAction, agentAt = s.agentLastAction, s.agentLastAt
+	}
 	s.mu.Unlock()
 
 	_, lookupErr := exec.LookPath(openConnectPath)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"initialized":                s.store.Initialized(),
+		"agent_enabled":              agentEnabled,
+		"agent_last_action":          agentAction,
+		"agent_last_at":              agentAt,
 		"unlocked":                   unlocked,
 		"vault_path":                 s.store.VaultPath(),
 		"config_dir":                 s.store.Dir(),

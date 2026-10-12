@@ -3,17 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/png" href="/static/logo.png">
     <title>OpenConnect Multi</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script src="/static/app.js" defer></script>
   </head>
   <body>
-    <div id="toast" class="toast" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <section id="authView" class="auth-view">
       <div class="auth-panel">
         <div class="brand-block">
-          <img class="brand-mark" src="/static/logo.jpg" alt="">
+          <img class="brand-mark" src="/static/logo.png" alt="">
           <div>
             <h1>OpenConnect Multi</h1>
             <p id="authSubtitle">Загрузка</p>
@@ -22,7 +23,7 @@
         <form id="authForm" class="pin-form" autocomplete="off">
           <label>
             <span>PIN</span>
-            <input id="pinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="0000">
+            <input id="pinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" required maxlength="4" autocomplete="off" placeholder="••••" aria-describedby="authSubtitle authError">
           </label>
           <button id="authSubmit" type="submit">Открыть</button>
         </form>
@@ -33,16 +34,16 @@
     <main id="appView" class="app-shell" hidden>
       <header class="topbar">
         <div class="brand-line">
-          <img class="brand-mark small" src="/static/logo.jpg" alt="">
+          <img class="brand-mark small" src="/static/logo.png" alt="">
           <div>
             <strong>OpenConnect Multi</strong>
             <span id="vaultPath" class="muted"></span>
           </div>
         </div>
         <div class="top-actions">
-          <span id="vpnState" class="state-chip">disconnected</span>
-          <button id="disconnectBtn" class="secondary" type="button">Disconnect</button>
-          <button id="lockBtn" class="ghost" type="button">Lock</button>
+          <span id="vpnState" class="state-chip">Не подключён</span>
+          <button id="disconnectBtn" class="secondary" type="button">Отключить</button>
+          <button id="lockBtn" class="ghost" type="button">Заблокировать</button>
         </div>
       </header>
 
@@ -52,27 +53,30 @@
         <aside class="profiles-pane">
           <div class="pane-head">
             <h2>Профили</h2>
-            <button id="newProfileBtn" type="button" title="New profile">+</button>
+            <button id="newProfileBtn" type="button" title="Добавить профиль" aria-label="Добавить профиль">+</button>
           </div>
+          <label class="profile-search"><span class="sr-only">Поиск профилей</span><input id="profileSearch" type="search" placeholder="Найти профиль…" autocomplete="off"></label>
           <div id="profilesList" class="profiles-list"></div>
         </aside>
 
         <section class="main-pane">
+          <div class="page-heading"><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>Ваши подключения</h1><p>Выберите профиль слева, чтобы подключиться к VPN.</p></div>
           <section class="connection-strip">
             <div>
-              <span class="label">Текущий VPN</span>
+              <span class="label">Подключение</span>
               <strong id="currentProfile">Нет подключения</strong>
             </div>
             <div>
-              <span class="label">PID</span>
+              <span class="label">Процесс</span>
               <strong id="currentPid">-</strong>
             </div>
             <div>
-              <span class="label">Запущен</span>
+              <span class="label">Начало сессии</span>
               <strong id="currentSince">-</strong>
             </div>
           </section>
 
+          <p id="connectionError" class="connection-error" role="alert" hidden></p>
           <div id="editorOverlay" class="modal-overlay" hidden>
           <section class="editor-panel" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
             <div class="pane-head">
@@ -97,14 +101,15 @@
                 <span>Пароль</span>
                 <input id="profilePassword" name="password" type="password" autocomplete="new-password">
               </label>
+              <details class="advanced wide"><summary>Дополнительные параметры</summary><div class="advanced-grid">
               <label>
                 <span>Группа</span>
-                <input id="profileAuthGroup" name="authGroup" type="text" placeholder="optional">
+                <input id="profileAuthGroup" name="authGroup" type="text" placeholder="Необязательно">
               </label>
               <label>
                 <span>Протокол</span>
                 <select id="profileProtocol" name="protocol">
-                  <option value="">auto</option>
+                  <option value="">Автоматически</option>
                   <option value="anyconnect">anyconnect</option>
                   <option value="gp">globalprotect</option>
                   <option value="pulse">pulse</option>
@@ -119,26 +124,38 @@
                 <input id="profileUserAgent" name="userAgent" type="text">
               </label>
               <label>
-                <span>Server cert</span>
+                <span>Сертификат сервера</span>
                 <input id="profileServerCert" name="serverCert" type="text" placeholder="sha256:...">
               </label>
               <label class="check-row">
                 <input id="profileNoCertCheck" name="noCertCheck" type="checkbox">
-                <span>no-cert-check</span>
+                <span>Отключить проверку сертификата</span>
               </label>
               <label class="wide">
-                <span>Extra args</span>
+                <span>Аргументы — по одному на строку</span>
                 <textarea id="profileExtraArgs" name="extraArgs" rows="4" placeholder="--timestamp&#10;--reconnect-timeout=10"></textarea>
               </label>
+              </div></details>
               <div class="form-actions">
                 <button id="saveProfileBtn" type="submit">Сохранить</button>
-                <button id="connectEditorBtn" class="secondary" type="button">Connect</button>
+                <button id="connectEditorBtn" class="secondary" type="button">Сохранить и подключить</button>
               </div>
             </form>
           </section>
           </div>
 
-          <section class="settings-panel">
+          <section class="settings-panel" aria-labelledby="agentTitle">
+            <div class="pane-head"><h2 id="agentTitle">MCP · Управление агентами</h2><span id="agentState" class="state-chip">Проверка…</span></div>
+            <p>Скажите агенту: «Переключи VPN на название профиля». Сервер <code>openconnect-vpn</code> работает с профилями этого приложения.</p>
+            <p class="muted">PIN вводится только здесь. Блокировка приложения закрывает агентам доступ к профилям и переключению VPN.</p>
+            <p id="agentActivity" class="muted" role="status"></p>
+            <details class="advanced"><summary>Как подключить агента</summary>
+              <p>Запустите <code>scripts/install-mcp.ps1</code> из папки проекта для регистрации в Codex. Для других клиентов добавьте stdio-сервер с командой <code>dist/openconnectmulti-mcp.exe</code> (полный путь).</p>
+              <p class="muted">Инструменты: vpn_status, vpn_list_profiles, vpn_switch_profile, vpn_disconnect, vpn_open_app. Подробности — docs/MCP.md.</p>
+            </details>
+          </section>
+
+          <details class="settings-panel"><summary>Настройки приложения <span>Путь к OpenConnect</span></summary><div class="settings-content">
             <div class="pane-head">
               <h2>Настройки</h2>
               <button id="saveSettingsBtn" class="secondary" type="button">Сохранить путь</button>
@@ -147,14 +164,14 @@
               <span>openconnect.exe</span>
               <input id="openconnectPath" type="text" placeholder="openconnect">
             </label>
-          </section>
+          </div></details>
 
           <section class="logs-panel">
             <div class="pane-head">
-              <h2>Лог</h2>
+              <div><h2>Журнал соединения</h2><p class="muted">События OpenConnect · обновляется автоматически</p></div>
               <button id="refreshLogsBtn" class="ghost" type="button">Обновить</button>
             </div>
-            <pre id="logsOutput"></pre>
+            <pre id="logsOutput" tabindex="0" aria-label="Журнал соединения"></pre>
           </section>
         </section>
       </div>

@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"time"
 
+	"openconnectmulti/internal/agentbridge"
 	"openconnectmulti/internal/desktop"
 	"openconnectmulti/internal/server"
 	"openconnectmulti/internal/vault"
@@ -34,6 +35,19 @@ func main() {
 	}
 	closeLog := setupLogging(store.Dir())
 	defer closeLog()
+	// Reuse an existing instance instead of splitting UI and agent state.
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	endpoint, endpointErr := agentbridge.Read(store.Dir())
+	if endpointErr == nil {
+		if _, err := endpoint.Call(checkCtx, agentbridge.Request{Action: "status"}); err == nil {
+			checkCancel()
+			if !*serverOnly && !*noBrowser {
+				_ = openBrowser(endpoint.URL)
+			}
+			return
+		}
+	}
+	checkCancel()
 
 	vpnManager := vpn.NewManager()
 	app := server.New(store, vpnManager)
@@ -48,6 +62,14 @@ func main() {
 	}
 
 	url := "http://" + listener.Addr().String()
+	if tcp, ok := listener.Addr().(*net.TCPAddr); ok && tcp.IP.Equal(net.ParseIP("127.0.0.1")) {
+		agentToken := app.EnableAgents()
+		cleanup, err := agentbridge.Publish(store.Dir(), agentbridge.Endpoint{URL: url, Token: agentToken})
+		if err != nil {
+			log.Fatalf("publish agent endpoint: %v", err)
+		}
+		defer cleanup()
+	}
 	log.Printf("OpenConnect Multi is running: %s", url)
 	log.Printf("Vault: %s", store.VaultPath())
 
