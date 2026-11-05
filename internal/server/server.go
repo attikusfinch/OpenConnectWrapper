@@ -29,9 +29,11 @@ var pinPattern = regexp.MustCompile(`^\d{4}$`)
 
 type vpnController interface {
 	Status() vpn.Status
+	Statuses() []vpn.Status
 	Logs() []vpn.LogEntry
 	Connect(vault.Profile, vault.Settings) error
 	Disconnect() error
+	DisconnectProfile(string) error
 }
 
 type Server struct {
@@ -65,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/profiles/", s.requireAuth(s.handleProfileByID))
 	mux.HandleFunc("/api/connect/", s.requireAuth(s.handleConnect))
 	mux.HandleFunc("/api/disconnect", s.requireAuth(s.handleDisconnect))
+	mux.HandleFunc("/api/disconnect/", s.requireAuth(s.handleDisconnect))
+	mux.HandleFunc("/api/connect-selected", s.requireAuth(s.handleConnectSelected))
 	mux.HandleFunc("/api/settings", s.requireAuth(s.handleSettings))
 	mux.HandleFunc("/api/logs", s.requireAuth(s.handleLogs))
 	return mux
@@ -115,6 +119,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"config_dir":                 s.store.Dir(),
 		"device_secret_path":         s.store.DeviceSecretPath(),
 		"vpn":                        s.vpn.Status(),
+		"connections":                s.vpn.Statuses(),
 		"openconnect_path":           configuredOpenConnectPath,
 		"effective_openconnect_path": openConnectPath,
 		"bundled_openconnect_path":   vpn.BundledOpenConnectPath(),
@@ -311,13 +316,17 @@ func (s *Server) handleProfileByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "profile not found")
 		return
 	}
+	if err := s.vpn.DisconnectProfile(id); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if s.unlocked.Data.Settings.InternetProfile == id {
+		s.unlocked.Data.Settings.InternetProfile = ""
+	}
 	s.unlocked.Data.Profiles = append(s.unlocked.Data.Profiles[:idx], s.unlocked.Data.Profiles[idx+1:]...)
 	if err := s.unlocked.Save(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if s.vpn.Status().ProfileID == id {
-		go func() { _ = s.vpn.Disconnect() }()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -347,11 +356,9 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := s.unlocked.Data.Profiles[idx]
 	settings := s.unlocked.Data.Settings
-	s.mu.Unlock()
 
 	err := s.vpn.Connect(profile, settings)
 
-	s.mu.Lock()
 	if s.unlocked != nil {
 		idx = findProfileIndex(s.unlocked.Data.Profiles, id)
 		if idx >= 0 {
@@ -377,7 +384,14 @@ func (s *Server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if err := s.vpn.Disconnect(); err != nil {
+	id := strings.TrimPrefix(r.URL.Path, "/api/disconnect/")
+	var err error
+	if r.URL.Path == "/api/disconnect" {
+		err = s.vpn.Disconnect()
+	} else {
+		err = s.vpn.DisconnectProfile(id)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -409,6 +423,19 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if s.unlocked == nil {
 			writeError(w, http.StatusUnauthorized, "locked")
 			return
+		}
+		if req.InternetProfile != "" && findProfileIndex(s.unlocked.Data.Profiles, req.InternetProfile) < 0 {
+			writeError(w, http.StatusBadRequest, "Internet VPN profile not found")
+			return
+		}
+		old := s.unlocked.Data.Settings
+		if req.MultiMode != old.MultiMode || req.InternetProfile != old.InternetProfile {
+			for _, status := range s.vpn.Statuses() {
+				if status.State != vpn.StateDisconnected {
+					writeError(w, http.StatusConflict, "Сначала отключите все VPN, затем измените режим или VPN для интернета.")
+					return
+				}
+			}
 		}
 		s.unlocked.Data.Settings = req
 		if err := s.unlocked.Save(); err != nil {
@@ -458,6 +485,8 @@ type pinRequest struct {
 }
 
 type profileRequest struct {
+	Routes      []string `json:"routes"`
+	DNSDomains  []string `json:"dns_domains"`
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Server      string   `json:"server"`
@@ -472,6 +501,8 @@ type profileRequest struct {
 }
 
 type profileResponse struct {
+	Routes             []string  `json:"routes,omitempty"`
+	DNSDomains         []string  `json:"dns_domains,omitempty"`
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
 	Server             string    `json:"server"`
@@ -489,6 +520,8 @@ type profileResponse struct {
 
 func normalizeProfile(req profileRequest) (vault.Profile, error) {
 	profile := vault.Profile{
+		Routes:      compactArgs(req.Routes),
+		DNSDomains:  compactArgs(req.DNSDomains),
 		ID:          strings.TrimSpace(req.ID),
 		Name:        strings.TrimSpace(req.Name),
 		Server:      strings.TrimSpace(req.Server),
@@ -503,6 +536,9 @@ func normalizeProfile(req profileRequest) (vault.Profile, error) {
 	}
 	if profile.Server == "" {
 		return profile, errors.New("server is required")
+	}
+	if err := vpn.ValidateNetworkOptions(profile.Routes, profile.DNSDomains); err != nil {
+		return profile, err
 	}
 	if profile.Name == "" {
 		profile.Name = profile.Server
@@ -540,6 +576,8 @@ func profilesDTO(profiles []vault.Profile) []profileResponse {
 
 func toProfileDTO(profile vault.Profile) profileResponse {
 	return profileResponse{
+		Routes:             profile.Routes,
+		DNSDomains:         profile.DNSDomains,
 		ID:                 profile.ID,
 		Name:               profile.Name,
 		Server:             profile.Server,

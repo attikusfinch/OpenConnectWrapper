@@ -1,7 +1,9 @@
+param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 $dist = Join-Path $root 'dist'
+if ($OutputDirectory) { $dist = [IO.Path]::GetFullPath($OutputDirectory) }
 $bundleSrc = Join-Path $root 'third_party\openconnect\windows-amd64'
 $bundleDst = Join-Path $dist 'openconnect\windows-amd64'
 

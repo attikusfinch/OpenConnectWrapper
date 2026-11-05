@@ -8,6 +8,8 @@ const state = {
   authMode: "unlock",
   profilesKey: "",
   busy: false,
+  selectedProfiles: new Set(),
+  connectionsKey: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -105,20 +107,49 @@ function renderAppShell() {
 }
 
 function updateVpnStatus(vpn) {
+  const connections = state.status?.connections || (vpn?.profile_id ? [vpn] : []);
+  const active = connections.filter(c => c.state !== "disconnected");
   const chip = $("vpnState");
-  const status = vpn?.state || "disconnected";
-  chip.textContent = ({ disconnected: "Не подключён", connecting: "Подключение…", connected: "Подключён", stopping: "Отключение…" })[status] || status;
+  const status = active.some(c => c.state === "stopping") ? "stopping" : active.some(c => c.state === "connecting") ? "connecting" : active.length ? "connected" : "disconnected";
+  chip.textContent = active.length ? `Активных: ${active.length}${status === "connecting" ? " · подключение…" : status === "stopping" ? " · отключение…" : ""}` : "Не подключён";
   chip.className = `state-chip ${status}`;
-  $("currentProfile").textContent = status === "disconnected" ? "Нет подключения" : (vpn?.profile_name || "VPN");
-  $("currentPid").textContent = vpn?.pid ? String(vpn.pid) : "-";
-  $("currentSince").textContent = status !== "disconnected" && vpn?.started_at ? formatTime(vpn.started_at) : "—";
   $("disconnectBtn").disabled = state.busy || status === "disconnected" || status === "stopping";
-  $("connectionError").textContent = vpn?.last_error ? `Соединение завершилось с ошибкой: ${vpn.last_error}. Подробности в журнале.` : "";
-  $("connectionError").hidden = !vpn?.last_error;
+  const errors = connections.filter(c => c.last_error).map(c => `${c.profile_name}: ${c.last_error}`);
+  $("connectionError").textContent = errors.join("\n");
+  $("connectionError").hidden = !errors.length;
+  const key = JSON.stringify(connections);
+  if (key !== state.connectionsKey) {
+    state.connectionsKey = key;
+    const list = $("connectionsList");
+    list.replaceChildren();
+    if (!active.length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "Нет активных подключений. Выберите профиль слева."; list.append(p); }
+    for (const c of active) {
+      const row = document.createElement("article"); row.className = "connection-row";
+      const heading = document.createElement("div"); heading.className = "pane-head";
+      const name = document.createElement("strong"); name.textContent = c.profile_name;
+      const badge = document.createElement("span"); badge.className = `state-chip ${c.state}`; badge.textContent = stateLabel(c.state);
+      heading.append(name, badge); row.append(heading);
+      const detail = document.createElement("p"); detail.className = "muted";
+      detail.textContent = `${c.multi ? (c.network?.full ? "Интернет и рабочие сети" : "Только рабочие сети") : "Один VPN"} · ${formatTime(c.started_at)} · PID ${c.pid}`;
+      row.append(detail);
+      if (c.network) {
+        const routes = document.createElement("p"); routes.className = "network-detail";
+        routes.textContent = `Маршруты: ${(c.network.routes || []).join(", ") || "—"}`; row.append(routes);
+        const dns = document.createElement("p"); dns.className = "network-detail";
+        dns.textContent = `DNS: ${(c.network.dns_servers || []).join(", ") || "—"} · Домены: ${(c.network.dns_domains || []).join(", ") || "не заданы"}`; row.append(dns);
+        if (c.network.warning) { const note=document.createElement("p"); note.className="muted"; note.textContent=c.network.warning; row.append(note); }
+      }
+      const note = document.createElement("p"); note.className = "muted";
+      note.textContent = c.state === "connected" ? (c.multi ? "Туннель настроен. Доступность рабочих ресурсов ещё нужно проверить." : "Сервер выдал адрес. Доступность рабочих ресурсов ещё нужно проверить.") : "Ожидаем настройки туннеля…"; row.append(note);
+      list.append(row);
+    }
+  }
   if (state.profiles.length > 0) {
     renderProfiles();
   }
 }
+
+function stateLabel(value) { return ({ disconnected: "Не подключён", connecting: "Подключение…", connected: "Настроен", stopping: "Отключение…" })[value] || value; }
 
 function updatePathWarning(status) {
   const configuredPath = status.openconnect_path || "openconnect";
@@ -140,21 +171,26 @@ async function loadProfiles() {
   const data = await api("/api/profiles");
   if (!state.unlocked) return;
   state.profiles = data.profiles || [];
+  state.selectedProfiles = new Set([...state.selectedProfiles].filter(id => state.profiles.some(p => p.id === id)));
   if (state.selectedId && !state.profiles.some((profile) => profile.id === state.selectedId)) {
     state.selectedId = "";
   }
   renderProfiles();
+  updateModeControls();
 }
 
 async function loadSettings() {
   state.settings = await api("/api/settings");
   $("openconnectPath").value = state.settings.openconnect_path || "openconnect";
+  $("connectionMode").value = state.settings.multi_mode ? "multi" : "single";
+  updateModeControls();
+  renderProfiles();
 }
 
 async function loadLogs() {
   const data = await api("/api/logs");
-  const lines = (data.logs || []).map((entry) => {
-    return `[${formatTime(entry.time)}] ${entry.message}`;
+  const lines = (data.logs || []).filter(entry => !$("logProfile").value || entry.profile_id === $("logProfile").value).map((entry) => {
+    return `[${formatTime(entry.time)}] ${entry.profile_name ? `[${entry.profile_name}] ` : ""}${entry.message}`;
   });
   if (!state.unlocked) return;
   const output = $("logsOutput");
@@ -168,7 +204,7 @@ async function loadLogs() {
 
 function renderProfiles() {
   const query = $("profileSearch").value.trim().toLowerCase();
-  const key = JSON.stringify([state.profiles, state.selectedId, state.status?.vpn?.state, state.status?.vpn?.profile_id, query, state.busy]);
+  const key = JSON.stringify([state.profiles, state.selectedId, state.status?.connections, [...state.selectedProfiles], state.settings.multi_mode, query, state.busy]);
   if (key === state.profilesKey) return;
   state.profilesKey = key;
   profilesList.replaceChildren();
@@ -193,8 +229,8 @@ function renderProfiles() {
     profilesList.append(empty);
   }
   for (const profile of filtered) {
-    const vpn = state.status?.vpn || {};
-    const isActive = vpn.profile_id === profile.id && vpn.state && vpn.state !== "disconnected";
+    const vpn = state.status?.connections?.find(c => c.profile_id === profile.id) || {};
+    const isActive = vpn.state && vpn.state !== "disconnected";
     const item = document.createElement("article");
     item.className = `profile-item ${isActive ? "active" : ""}`;
 
@@ -213,6 +249,14 @@ function renderProfiles() {
     server.className = "muted";
     server.textContent = profile.server;
     main.append(title, server);
+    const statusText = document.createElement("span"); statusText.className="muted"; statusText.textContent=stateLabel(vpn.state || "disconnected"); main.append(statusText);
+    if (state.settings.multi_mode) {
+      const label=document.createElement("label"); label.className="check-row profile-selection";
+      const check=document.createElement("input"); check.type="checkbox"; check.checked=state.selectedProfiles.has(profile.id); check.disabled=state.busy;
+      const caption=document.createElement("span"); caption.textContent="Включить в выбор";
+      check.addEventListener("change",()=>{ if(check.checked) state.selectedProfiles.add(profile.id); else state.selectedProfiles.delete(profile.id); updateSelectionControls(); });
+      label.append(check,caption); main.append(label);
+    }
 
     const actions = document.createElement("div");
     actions.className = "profile-actions";
@@ -224,7 +268,7 @@ function renderProfiles() {
     connect.className = isActive ? "secondary" : "";
     connect.addEventListener("click", () => {
       if (isActive) {
-        runAction(disconnectVpn);
+        runAction(() => disconnectVpn(profile.id));
         return;
       }
       runAction(() => connectProfile(profile.id));
@@ -273,6 +317,34 @@ function renderProfiles() {
     item.append(avatar, content);
     profilesList.append(item);
   }
+  updateSelectionControls();
+}
+
+function updateSelectionControls() {
+  const count=state.selectedProfiles.size;
+  $("connectSelectedBtn").textContent=count ? `Подключить выбранные (${count})` : "Подключить выбранные";
+  $("connectSelectedBtn").disabled=state.busy || count===0;
+  $("selectAllProfiles").checked=count>0 && count===state.profiles.length;
+  $("selectAllProfiles").indeterminate=count>0 && count<state.profiles.length;
+}
+
+function updateModeControls() {
+  const multi=$("connectionMode").value === "multi";
+  $("internetProfileField").hidden=!multi;
+  $("selectionActions").hidden=!state.settings.multi_mode;
+  const desired=state.settings.internet_profile || "";
+  for (const id of ["internetProfile","logProfile"]) {
+    const select=$(id), previous=id==="internetProfile" ? desired : select.value;
+    const options=JSON.stringify(state.profiles.map(p=>[p.id,p.name]));
+    if(select.dataset.options!==options) {
+      select.dataset.options=options;
+      select.replaceChildren(new Option(id==="internetProfile" ? "Обычное подключение" : "Все профили",""));
+      for(const p of state.profiles) select.add(new Option(p.name,p.id));
+      select.value=previous;
+    }
+  }
+  $("internetProfile").value=desired;
+  $("modeDescription").textContent=multi ? "Мульти: выбранный VPN обслуживает интернет, остальные — свои рабочие сети. Без VPN для интернета используется обычное подключение. IPv4; IPv6 остаётся через провайдера. Для смены режима сначала отключите все VPN." : "Один VPN: подключение другого профиля заменяет текущее.";
 }
 
 function toggleProfileMenu(menu) {
@@ -311,6 +383,8 @@ function editProfile(profile) {
   $("profileServerCert").value = profile.server_cert || "";
   $("profileNoCertCheck").checked = Boolean(profile.no_cert_check);
   $("profileExtraArgs").value = (profile.extra_args || []).join("\n");
+  $("profileRoutes").value = (profile.routes || []).join("\n");
+  $("profileDNSDomains").value = (profile.dns_domains || []).join("\n");
   openEditor();
   renderProfiles();
 }
@@ -359,6 +433,8 @@ async function saveProfile() {
     server_cert: $("profileServerCert").value.trim(),
     no_cert_check: $("profileNoCertCheck").checked,
     extra_args: $("profileExtraArgs").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+    routes: $("profileRoutes").value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),
+    dns_domains: $("profileDNSDomains").value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean),
   };
   const data = await api("/api/profiles", {
     method: "POST",
@@ -383,8 +459,8 @@ async function connectProfile(id) {
   }
 }
 
-async function disconnectVpn() {
-  await api("/api/disconnect", { method: "POST", body: "{}" });
+async function disconnectVpn(id) {
+  await api(id ? `/api/disconnect/${encodeURIComponent(id)}` : "/api/disconnect", { method: "POST", body: "{}" });
   showToast("OpenConnect остановлен");
   await refreshStatus();
   await loadLogs();
@@ -456,6 +532,21 @@ $("profileSearch").addEventListener("input", renderProfiles);
 $("newProfileBtn").addEventListener("click", newProfile);
 $("clearEditorBtn").addEventListener("click", closeEditor);
 $("refreshLogsBtn").addEventListener("click", () => runAction(loadLogs));
+$("logProfile").addEventListener("change", () => runAction(loadLogs));
+$("connectionMode").addEventListener("change", updateModeControls);
+$("saveModeBtn").addEventListener("click", () => runAction(async () => {
+  $("modeError").hidden=true;
+  try {
+    state.settings=await api("/api/settings",{method:"POST",body:JSON.stringify({...state.settings,multi_mode:$("connectionMode").value==="multi",internet_profile:$("internetProfile").value})});
+    renderProfiles(); updateModeControls(); showToast("Режим сохранён");
+  } catch(error) { $("modeError").textContent=error.message; $("modeError").hidden=false; throw error; }
+}));
+$("selectAllProfiles").addEventListener("change",()=>{ state.selectedProfiles=new Set($("selectAllProfiles").checked ? state.profiles.map(p=>p.id) : []); renderProfiles(); });
+$("connectSelectedBtn").addEventListener("click",()=>runAction(async()=>{
+  const result=await api("/api/connect-selected",{method:"POST",body:JSON.stringify({profiles:[...state.selectedProfiles]})});
+  await refreshStatus(); await loadLogs();
+  showToast(result.ok ? "Выбранные подключения запущены" : Object.entries(result.errors).map(([id,message])=>`${state.profiles.find(p=>p.id===id)?.name || id}: ${message}`).join("; "));
+}));
 $("connectEditorBtn").addEventListener("click", () => runAction(async () => {
   const saved = await saveProfile();
   if (saved?.id) await connectProfile(saved.id);
@@ -476,13 +567,13 @@ window.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("click", closeProfileMenus);
-$("disconnectBtn").addEventListener("click", () => runAction(disconnectVpn));
+$("disconnectBtn").addEventListener("click", () => runAction(() => disconnectVpn()));
 $("lockBtn").addEventListener("click", () => runAction(async () => {
   await api("/api/lock", { method: "POST", body: "{}" });
   renderAuth("unlock");
 }));
 $("saveSettingsBtn").addEventListener("click", () => runAction(async () => {
-  const payload = { openconnect_path: $("openconnectPath").value.trim() || "openconnect" };
+  const payload = { ...state.settings, openconnect_path: $("openconnectPath").value.trim() || "openconnect" };
   state.settings = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
   showToast("Настройки сохранены");
   await refreshStatus();

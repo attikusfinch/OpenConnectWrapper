@@ -49,7 +49,7 @@ func main() {
 	}
 	checkCancel()
 
-	vpnManager := vpn.NewManager()
+	vpnManager := vpn.NewManagerWithNetworkDir(filepath.Join(store.Dir(), "network-runtime"))
 	app := server.New(store, vpnManager)
 	httpServer := &http.Server{
 		Handler:           app.Handler(),

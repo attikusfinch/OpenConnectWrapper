@@ -2,6 +2,7 @@
 /dist/
 /bin/
 /build/
+/.impeccable/review/
 
 # Local runtime logs
 *.log

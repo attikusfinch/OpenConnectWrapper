@@ -42,7 +42,7 @@
         </div>
         <div class="top-actions">
           <span id="vpnState" class="state-chip">Не подключён</span>
-          <button id="disconnectBtn" class="secondary" type="button">Отключить</button>
+          <button id="disconnectBtn" class="secondary" type="button">Отключить все</button>
           <button id="lockBtn" class="ghost" type="button">Заблокировать</button>
         </div>
       </header>
@@ -56,24 +56,27 @@
             <button id="newProfileBtn" type="button" title="Добавить профиль" aria-label="Добавить профиль">+</button>
           </div>
           <label class="profile-search"><span class="sr-only">Поиск профилей</span><input id="profileSearch" type="search" placeholder="Найти профиль…" autocomplete="off"></label>
+          <div id="selectionActions" class="selection-actions" hidden>
+            <label class="check-row"><input id="selectAllProfiles" type="checkbox"><span>Выбрать все</span></label>
+            <button id="connectSelectedBtn" type="button" disabled>Подключить выбранные</button>
+          </div>
           <div id="profilesList" class="profiles-list"></div>
         </aside>
 
         <section class="main-pane">
-          <div class="page-heading"><span class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</span><h1>Ваши подключения</h1><p>Выберите профиль слева, чтобы подключиться к VPN.</p></div>
-          <section class="connection-strip">
-            <div>
-              <span class="label">Подключение</span>
-              <strong id="currentProfile">Нет подключения</strong>
+          <div class="page-heading"><h1>Ваши подключения</h1><p>Подключайтесь к рабочим сетям по отдельности или вместе.</p></div>
+          <section class="mode-panel" aria-labelledby="modeTitle">
+            <h2 id="modeTitle">Режим подключения</h2>
+            <div class="mode-controls">
+              <label><span>Режим</span><select id="connectionMode"><option value="single">Один VPN</option><option value="multi">Мульти</option></select></label>
+              <label id="internetProfileField" hidden><span>Интернет через</span><select id="internetProfile"><option value="">Обычное подключение</option></select></label>
+              <button id="saveModeBtn" class="secondary" type="button">Применить</button>
             </div>
-            <div>
-              <span class="label">Процесс</span>
-              <strong id="currentPid">-</strong>
-            </div>
-            <div>
-              <span class="label">Начало сессии</span>
-              <strong id="currentSince">-</strong>
-            </div>
+            <p id="modeDescription" class="muted">Один VPN: подключение другого профиля заменяет текущее.</p>
+            <p id="modeError" class="form-error" role="alert" hidden></p>
+          </section>
+          <section id="connectionsList" class="connections-list" aria-label="Состояния подключений" aria-live="polite">
+            <p class="muted">Нет активных подключений.</p>
           </section>
 
           <p id="connectionError" class="connection-error" role="alert" hidden></p>
@@ -132,6 +135,16 @@
                 <span>Отключить проверку сертификата</span>
               </label>
               <label class="wide">
+                <span>Рабочие IPv4-сети для режима Мульти</span>
+                <textarea id="profileRoutes" rows="3" placeholder="10.110.16.0/20"></textarea>
+                <small class="muted">Необязательно. CIDR, по одной сети на строку. Добавляются к маршрутам сервера. Маршрут для интернета выбирается в главном окне.</small>
+              </label>
+              <label class="wide">
+                <span>Рабочие DNS-домены для режима Мульти</span>
+                <textarea id="profileDNSDomains" rows="2" placeholder="corp.example.com"></textarea>
+                <small class="muted">Необязательно. По одному домену на строку. Эти имена разрешаются через DNS данного VPN.</small>
+              </label>
+              <label class="wide">
                 <span>Аргументы — по одному на строку</span>
                 <textarea id="profileExtraArgs" name="extraArgs" rows="4" placeholder="--timestamp&#10;--reconnect-timeout=10"></textarea>
               </label>
@@ -169,7 +182,7 @@
           <section class="logs-panel">
             <div class="pane-head">
               <div><h2>Журнал соединения</h2><p class="muted">События OpenConnect · обновляется автоматически</p></div>
-              <button id="refreshLogsBtn" class="ghost" type="button">Обновить</button>
+              <div class="log-actions"><label><span class="sr-only">Фильтр журнала</span><select id="logProfile"><option value="">Все профили</option></select></label><button id="refreshLogsBtn" class="ghost" type="button">Обновить</button></div>
             </div>
             <pre id="logsOutput" tabindex="0" aria-label="Журнал соединения"></pre>
           </section>

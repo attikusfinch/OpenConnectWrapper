@@ -52,6 +52,8 @@ type Data struct {
 
 type Settings struct {
 	OpenConnectPath string `json:"openconnect_path"`
+	MultiMode       bool   `json:"multi_mode"`
+	InternetProfile string `json:"internet_profile,omitempty"`
 }
 
 type Profile struct {
@@ -66,6 +68,8 @@ type Profile struct {
 	ServerCert         string    `json:"server_cert"`
 	NoCertCheck        bool      `json:"no_cert_check"`
 	ExtraArgs          []string  `json:"extra_args"`
+	Routes             []string  `json:"routes,omitempty"`
+	DNSDomains         []string  `json:"dns_domains,omitempty"`
 	LastConnectedAt    time.Time `json:"last_connected_at,omitempty"`
 	LastConnectedError string    `json:"last_connected_error,omitempty"`
 }

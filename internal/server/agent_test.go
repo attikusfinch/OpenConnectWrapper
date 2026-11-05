@@ -20,7 +20,14 @@ type fakeVPN struct {
 	connects, disconnects int
 }
 
-func (f *fakeVPN) Status() vpn.Status   { return f.status }
+func (f *fakeVPN) Status() vpn.Status     { return f.status }
+func (f *fakeVPN) Statuses() []vpn.Status { return []vpn.Status{f.status} }
+func (f *fakeVPN) DisconnectProfile(id string) error {
+	if f.status.ProfileID == id {
+		return f.Disconnect()
+	}
+	return nil
+}
 func (f *fakeVPN) Logs() []vpn.LogEntry { return nil }
 func (f *fakeVPN) Connect(p vault.Profile, _ vault.Settings) error {
 	f.connects++

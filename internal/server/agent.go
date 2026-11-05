@@ -71,11 +71,20 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.vpn.Status()
-	if current.ProfileID == profile.ID && (current.State == vpn.StateConnected || current.State == vpn.StateConnecting) {
+	active := 0
+	for _, status := range s.vpn.Statuses() {
+		if status.State != vpn.StateDisconnected {
+			active++
+		}
+	}
+	if active == 1 && current.ProfileID == profile.ID && (current.State == vpn.StateConnected || current.State == vpn.StateConnecting) {
 		writeJSON(w, http.StatusOK, s.agentStatusLocked())
 		return
 	}
-	if err := s.vpn.Connect(profile, s.unlocked.Data.Settings); err != nil {
+	// The existing switch tool retains its documented exclusive semantics.
+	settings := s.unlocked.Data.Settings
+	settings.MultiMode = false
+	if err := s.vpn.Connect(profile, settings); err != nil {
 		writeError(w, http.StatusBadGateway, "VPN could not start; inspect the application journal and profile settings")
 		return
 	}
@@ -111,6 +120,12 @@ func resolveAgentProfile(profiles []vault.Profile, query string) (vault.Profile,
 
 func (s *Server) agentStatusLocked() map[string]any {
 	status := s.vpn.Status()
+	// Status.Command may contain user-supplied authentication arguments. Never
+	// expose it through MCP, including for inactive connections.
+	connections := []map[string]any{}
+	for _, c := range s.vpn.Statuses() {
+		connections = append(connections, map[string]any{"state": c.State, "profile_id": c.ProfileID, "profile_name": c.ProfileName, "multi": c.Multi, "network": c.Network, "last_error": c.LastError})
+	}
 	next := "Call vpn_list_profiles, then vpn_switch_profile with an exact profile ID or name."
 	if s.unlocked == nil {
 		next = "Unlock the app in its window. Do not ask for the PIN in chat."
@@ -118,7 +133,8 @@ func (s *Server) agentStatusLocked() map[string]any {
 	return map[string]any{
 		"running": true, "unlocked": s.unlocked != nil, "initialized": s.store.Initialized(),
 		"state": status.State, "profile_id": status.ProfileID, "profile_name": status.ProfileName,
+		"connections":     connections,
 		"next_step":       next,
-		"connection_note": "connected means the OpenConnect process is running; tunnel reachability is not verified",
+		"connection_note": "Multi connected means network configuration completed; single connected means an address was negotiated. Infrastructure reachability is not verified. vpn_switch_profile replaces ALL active connections; vpn_disconnect stops ALL.",
 	}
 }

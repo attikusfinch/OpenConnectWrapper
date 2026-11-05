@@ -35,8 +35,8 @@ func tools() []map[string]any {
 	}{
 		{"vpn_status", "Check OpenConnect Multi VPN status, app availability and whether the vault needs unlocking. Статус VPN / ВПН.", true},
 		{"vpn_list_profiles", "List saved VPN profile IDs, names, servers and protocols, without passwords. Найти VPN-профиль.", true},
-		{"vpn_switch_profile", "Connect or switch VPN to an exact profile ID or unique name. Replaces the current connection. Переключить / подключить VPN. Repeating the current profile does not reconnect.", false},
-		{"vpn_disconnect", "Disconnect the current VPN. Отключить VPN. Only when requested by the user.", false},
+		{"vpn_switch_profile", "Connect or switch VPN to an exact profile ID or unique name. Replaces ALL active connections, including Multi tunnels, with one VPN. Переключить / подключить VPN. Repeating the only active profile does not reconnect.", false},
+		{"vpn_disconnect", "Disconnect ALL active VPN connections, including Multi tunnels. Отключить все VPN. Only when requested by the user.", false},
 		{"vpn_open_app", "Open OpenConnect Multi so the user can enter the PIN locally. Start the desktop app if offline; reuse it when running. No PIN or password arguments.", false},
 	} {
 		schema := map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}
