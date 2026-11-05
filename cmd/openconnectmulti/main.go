@@ -41,8 +41,8 @@ func main() {
 	if endpointErr == nil {
 		if _, err := endpoint.Call(checkCtx, agentbridge.Request{Action: "status"}); err == nil {
 			checkCancel()
-			if !*serverOnly && !*noBrowser {
-				_ = openBrowser(endpoint.URL)
+			if err := desktop.ShowExisting(endpoint.URL, store.Dir(), *browser, *serverOnly || *noBrowser, openBrowser); err != nil {
+				log.Printf("show existing application: %v", err)
 			}
 			return
 		}

@@ -7,6 +7,8 @@ import (
 	"runtime"
 )
 
+func ActivateExisting(_ string) bool { return false }
+
 func Open(url string, _ string) error {
 	switch runtime.GOOS {
 	case "darwin":
